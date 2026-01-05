@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tarot AR – Deck → Spread</title>
+
+<style>
+body { margin:0; overflow:hidden; background:#050505; color:white; font-family:serif }
+#canvas-container { width:100vw; height:100vh }
+#input-video { display:none }
+#guide-text {
+    position:absolute; bottom:20px; width:100%; text-align:center;
+    letter-spacing:3px; font-size:0.7rem; opacity:0.8
+}
+#virtual-cursor {
+    position:absolute; width:24px; height:24px;
+    border:2px solid white; border-radius:50%;
+    transform:translate(-50%,-50%);
+    pointer-events:none; display:none
+}
+#virtual-cursor.pinching {
+    background:white; width:14px; height:14px;
+}
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+</head>
+
+<body>
+<video id="input-video" autoplay muted playsinline></video>
+<div id="canvas-container"></div>
+<div id="virtual-cursor"></div>
+<div id="guide-text">Giơ tay lên để xoay xấp bài</div>
+
+<script>
+/* ================= DATA ================= */
+
+const TAROT_DATA = [
+ {name:"The Fool",url:"https://upload.wikimedia.org/wikipedia/commons/9/90/RWS_Tarot_00_Fool.jpg",meaning:"Khởi đầu"},
+ {name:"The Magician",url:"https://upload.wikimedia.org/wikipedia/commons/d/de/RWS_Tarot_01_Magician.jpg",meaning:"Hành động"},
+ {name:"The High Priestess",url:"https://upload.wikimedia.org/wikipedia/commons/8/88/RWS_Tarot_02_High_Priestess.jpg",meaning:"Trực giác"},
+ {name:"The Empress",url:"https://upload.wikimedia.org/wikipedia/commons/d/d2/RWS_Tarot_03_Empress.jpg",meaning:"Sáng tạo"},
+ {name:"The Emperor",url:"https://upload.wikimedia.org/wikipedia/commons/c/c3/RWS_Tarot_04_Emperor.jpg",meaning:"Cấu trúc"},
+ {name:"The Hierophant",url:"https://upload.wikimedia.org/wikipedia/commons/8/8d/RWS_Tarot_05_Hierophant.jpg",meaning:"Niềm tin"},
+ {name:"The Lovers",url:"https://upload.wikimedia.org/wikipedia/commons/3/3a/RWS_Tarot_06_Lovers.jpg",meaning:"Lựa chọn"},
+ {name:"The Chariot",url:"https://upload.wikimedia.org/wikipedia/commons/9/9b/RWS_Tarot_07_Chariot.jpg",meaning:"Chiến thắng"},
+ {name:"Strength",url:"https://upload.wikimedia.org/wikipedia/commons/f/f5/RWS_Tarot_08_Strength.jpg",meaning:"Nội lực"},
+ {name:"The Hermit",url:"https://upload.wikimedia.org/wikipedia/commons/4/4d/RWS_Tarot_09_Hermit.jpg",meaning:"Suy ngẫm"},
+ {name:"Wheel of Fortune",url:"https://upload.wikimedia.org/wikipedia/commons/3/3c/RWS_Tarot_10_Wheel_of_Fortune.jpg",meaning:"Thay đổi"},
+ {name:"Justice",url:"https://upload.wikimedia.org/wikipedia/commons/e/e0/RWS_Tarot_11_Justice.jpg",meaning:"Cân bằng"},
+ {name:"The Hanged Man",url:"https://upload.wikimedia.org/wikipedia/commons/2/2b/RWS_Tarot_12_Hanged_Man.jpg",meaning:"Hy sinh"},
+ {name:"Death",url:"https://upload.wikimedia.org/wikipedia/commons/d/d7/RWS_Tarot_13_Death.jpg",meaning:"Tái sinh"},
+ {name:"Temperance",url:"https://upload.wikimedia.org/wikipedia/commons/f/f8/RWS_Tarot_14_Temperance.jpg",meaning:"Điều độ"},
+ {name:"The Devil",url:"https://upload.wikimedia.org/wikipedia/commons/5/55/RWS_Tarot_15_Devil.jpg",meaning:"Ràng buộc"},
+ {name:"The Tower",url:"https://upload.wikimedia.org/wikipedia/commons/5/53/RWS_Tarot_16_Tower.jpg",meaning:"Sụp đổ"},
+ {name:"The Star",url:"https://upload.wikimedia.org/wikipedia/commons/d/db/RWS_Tarot_17_Star.jpg",meaning:"Hy vọng"},
+ {name:"The Moon",url:"https://upload.wikimedia.org/wikipedia/commons/7/7f/RWS_Tarot_18_Moon.jpg",meaning:"Ảo ảnh"},
+ {name:"The Sun",url:"https://upload.wikimedia.org/wikipedia/commons/1/17/RWS_Tarot_19_Sun.jpg",meaning:"Thành công"},
+ {name:"Judgement",url:"https://upload.wikimedia.org/wikipedia/commons/d/dd/RWS_Tarot_20_Judgement.jpg",meaning:"Thức tỉnh"},
+ {name:"The World",url:"https://upload.wikimedia.org/wikipedia/commons/f/ff/RWS_Tarot_21_World.jpg",meaning:"Hoàn tất"}
+];
+
+const TOTAL_CARDS = 22;
+shuffle(TAROT_DATA);
+const SELECTED = TAROT_DATA.slice(0, TOTAL_CARDS);
+
+/* ================= THREE ================= */
+
+let scene, camera, renderer, cardGroup;
+let rotationSpeed = 0;
+let handX = 0.5;
+let isPinching = false;
+let isSpread = false;
+
+init();
+animate();
+
+/* ================= FUNCTIONS ================= */
+
+function shuffle(a){
+ for(let i=a.length-1;i>0;i--){
+  const j=Math.floor(Math.random()*(i+1));
+  [a[i],a[j]]=[a[j],a[i]];
+ }
+}
+
+function init(){
+ scene = new THREE.Scene();
+ camera = new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,100);
+ camera.position.z = 5;
+
+ renderer = new THREE.WebGLRenderer({alpha:true,antialias:true});
+ renderer.setSize(innerWidth,innerHeight);
+ document.getElementById("canvas-container").appendChild(renderer.domElement);
+
+ scene.add(new THREE.AmbientLight(0xffffff,0.8));
+ cardGroup = new THREE.Group();
+ scene.add(cardGroup);
+
+ createDeck();
+ window.addEventListener("resize",onResize);
+}
+
+function createDeck(){
+ const geo = new THREE.BoxGeometry(1.4,2.4,0.03);
+ const back = new THREE.TextureLoader().load("back.png");
+
+ SELECTED.forEach((data,i)=>{
+  const front = new THREE.TextureLoader().load(data.url);
+  const card = new THREE.Mesh(
+    geo,
+    [
+     new THREE.MeshStandardMaterial({color:0xd4af37}),
+     new THREE.MeshStandardMaterial({color:0xd4af37}),
+     new THREE.MeshStandardMaterial({color:0xd4af37}),
+     new THREE.MeshStandardMaterial({color:0xd4af37}),
+     new THREE.MeshStandardMaterial({map:back}),
+     new THREE.MeshStandardMaterial({map:front})
+    ]
+  );
+  card.position.set(0,0,i*0.01);
+  cardGroup.add(card);
+ });
+}
+
+function spreadCards(){
+ isSpread = true;
+ document.getElementById("guide-text").innerText = "Chọn lá bài của bạn";
+
+ cardGroup.children.forEach((card,i)=>{
+  const a = (i/TOTAL_CARDS)*Math.PI*2;
+  new TWEEN.Tween(card.position)
+   .to({x:Math.sin(a)*5.5,y:0,z:Math.cos(a)*5.5},1200)
+   .easing(TWEEN.Easing.Exponential.Out)
+   .start();
+  card.lookAt(0,0,0);
+ });
+}
+
+function animate(time){
+ requestAnimationFrame(animate);
+ TWEEN.update(time);
+
+ if(!isSpread){
+  let target = 0;
+  if(handX<0.4) target=-0.04;
+  else if(handX>0.6) target=0.04;
+  rotationSpeed += (target-rotationSpeed)*0.08;
+  cardGroup.rotation.y += rotationSpeed;
+ }
+
+ renderer.render(scene,camera);
+}
+
+function onResize(){
+ camera.aspect=innerWidth/innerHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(innerWidth,innerHeight);
+}
+
+/* ================= HAND TRACKING ================= */
+
+const hands = new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+hands.setOptions({maxNumHands:1,minDetectionConfidence:0.5});
+hands.onResults(res=>{
+ if(res.multiHandLandmarks){
+  const lm = res.multiHandLandmarks[0];
+  handX = 1 - lm[9].x;
+  const d = Math.hypot(lm[8].x-lm[4].x,lm[8].y-lm[4].y);
+  if(d<0.08 && !isPinching && !isSpread) spreadCards();
+  isPinching = d<0.08;
+ }
+});
+
+const cam = new Camera(document.getElementById("input-video"),{
+ onFrame:async()=>hands.send({image:inputVideo}),
+ width:640,height:480
+});
+cam.start();
+</script>
+</body>
+</html>
