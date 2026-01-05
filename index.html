@@ -177,7 +177,7 @@ hands.onResults(res=>{
 });
 
 const cam = new Camera(document.getElementById("input-video"),{
- onFrame:async()=>hands.send({image:inputVideo}),
+ onFrame:async()=>hands.send({image: document.getElementById("input-video")}),
  width:640,height:480
 });
 cam.start();
